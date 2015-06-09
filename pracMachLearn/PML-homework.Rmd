@@ -1,0 +1,196 @@
+---
+title: "Coursera - Practical Machine Learning Project"
+author: "Vahid Ghayoomi"
+output: html_document
+---
+
+# Introduction
+
+These are codes implemented for a homework assignment of Coursera’s Practical Machine Learning course: <https://class.coursera.org/predmachlearn-015>.
+You can find more information about the homework assignment and it's goals in the following sections.
+
+
+# Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset). 
+
+
+# Data
+
+The training data for this project are available here: 
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here: 
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+The data for this project come from this source: <http://groupware.les.inf.puc-rio.br/har>. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+
+# What you should submit
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+
+1. Your submission should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
+2. You should also apply your machine learning algorithm to the 20 test cases available in the test data above. Please submit your predictions in appropriate format to the programming assignment for automated grading. See the programming assignment for additional details. 
+
+
+# Reproducibility
+
+Due to security concerns with the exchange of R code, your code will not be run during the evaluation by your classmates. Please be sure that if they download the repo, they will be able to view the compiled HTML version of your analysis. 
+
+---------------
+
+# Solution
+
+## Loading Libraries
+
+```{r}
+library(caret)
+library(MASS)
+library(randomForest)
+library(rpart)
+library(rattle)
+```
+
+## Getting and loading the data
+
+Reading datasets and converting different types of invalid values into one (NA).
+
+```{r}
+trainingUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(trainingUrl), na.strings=c("NA","#DIV/0!",""," ","NULL"))
+testing <- read.csv(url(testingUrl), na.strings=c("NA","#DIV/0!",""," ","NULL"))
+```
+
+##Data cleaning
+
+1) Removing index column to prevent affecting prediction
+
+```{r}
+training2_i <- training[,-1]
+testing_i <- testing[,-1]
+```
+
+2) Removing variables with lots of NA values. For this purpose, variables with more than 60% NA values will be considered as useless, so will be removed.
+
+```{r}
+NAs <- apply(training2_i, 2, function(x){sum(is.na(x))/length(x)})
+exclude <- which(NAs > 0.60)
+training2_na <- training2_i[,-exclude]
+dim(training2_na)
+```
+
+3) Cleaning Near Zero Variance variables
+
+```{r}
+my_nzv <- nearZeroVar(training2_na, saveMetrics = TRUE)
+nzv_cols <- rownames(my_nzv[my_nzv$nzv,])
+nzv_cols
+training2_nzv <- training2_na[,-which(names(training2_na) %in% nzv_cols)]
+```
+
+4) Now applying cleaned columns to the training, and testing sets
+
+```{r}
+colnames(training2_nzv)
+clean_cols_test <- colnames(training2_nzv[,-58])
+testing_f <- testing_i[clean_cols_test]
+```
+
+5) Due to `cvdt_timestamp` error when applying ML algorithms, the same formats should be used
+```{r}
+training2_nzv$cvtd_timestamp <- as.numeric(strptime(as.character(training2_nzv$cvtd_timestamp), format = "%d/%m/%Y %H:%M"))
+testing_f$cvtd_timestamp <- as.numeric(strptime(as.character(testing_f$cvtd_timestamp), format = "%d/%m/%Y %H:%M"))
+```
+
+## Data splitting
+
+Now that we have the final training set we can partion it into training and validation sets:
+  
+```{r}
+set.seed(123123)
+inTrain <- createDataPartition(y=training2_nzv$classe, p=0.6, list=FALSE)
+training_f <- training2_nzv[inTrain, ]; validation_f <- training2_nzv[-inTrain, ]
+dim(training_f); dim(validation_f)
+```
+
+## Applying ML algorithms
+
+### 1) Using Linear Models
+First of all, starting with Linear Models, LM, and GLM. Both of them could not fit data to a linear model and returning an error.
+```{r}
+# glm_train <- train(classe ~ ., data = training_f, method="glm", preProcess = "pca")
+```
+
+### 2) Using classification tree
+Applying a classification tree on the training set.
+```{r}
+ct_train <- train(classe ~ ., data = training_f, method="rpart")
+fancyRpartPlot(ct_train$finalModel)
+ct_prediction <- predict(ct_train, newdata=validation_f)
+confusionMatrix(ct_prediction, validation_f$classe)
+```
+
+Trying the same method with different cross validation, resampling, and preprocessing methods to compare results:
+```{r}
+ct_train_cv1 <- train(classe~., data=training_f, method="rpart", trControl =  trainControl(method="cv", number = 4), preProcess="pca")
+ct_predict_cv1 <- predict(ct_train_cv1, newdata=validation_f)
+confusionMatrix(ct_predict_cv1, validation_f$classe)
+
+ct_train_cv2 <- train(classe~., data=training_f, method="rpart", trControl =  trainControl(method="cv", number = 4), preProcess=c("center","scale"))
+ct_predict_cv2 <- predict(ct_train_cv2, newdata=validation_f)
+confusionMatrix(ct_predict_cv2, validation_f$classe)
+
+ct_train_boot <- train(classe~., data=training_f, method="rpart", trControl =  trainControl(method="boot", repeats = 25))
+ct_predict_boot <- predict(ct_train_boot, newdata=validation_f)
+confusionMatrix(ct_predict_boot, validation_f$classe)
+```
+
+It seems like beside using pca for preprocessing which worsens the results, there is no much difference among others.
+
+### 3) Using random forest
+Now trying a random forest on the training set (there is no need for cross validation, etc in random forest as it is done internally).
+```{r}
+rf_train <- train(classe ~ ., data = training_f, method="rf")
+rf_prediction <- predict(rf_train, newdata=validation_f)
+confusionMatrix(rf_prediction, validation_f$classe)
+```
+
+### 4) Using LDA
+We can also try model-based algorithms. Here I'm using linear discriminant analysis (LDA).
+```{r}
+lda_train <- train(classe ~ ., data = training_f, method="lda", preProcess = c("center","scale"))
+lda_prediction <- predict(lda_train, newdata=validation_f)
+confusionMatrix(lda_prediction, validation_f$classe)
+```
+
+
+## Comparing results
+
+Comparing results from confusion matrix for different models, show that the random forest method is the leading one:
+
+* Accuracy: 0.9989
+* Kappa : 0.9985
+* Sensitivity > 99.7% for each class
+* Specificity > 99.9% for each class
+* Positive predictive value > 99.7% for each class
+* Negative predictive value > 99.9% for each class
+
+
+## Applying MLA on the test set and saving results for submission
+Now we will apply the chosen machine learning algorithm to each of the 20 test cases in the testing data set.
+Final results will be saved and submitted to the submission page.
+```{r}
+pml_write_files = function(x) {
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i], file=filename, quote=FALSE, row.names=FALSE, col.names=FALSE)
+  }
+}
+
+final_prediction <- predict(rf_train, newdata=testing_f)
+final_prediction
+pml_write_files(final_prediction)
+```
